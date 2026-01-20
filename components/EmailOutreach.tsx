@@ -36,6 +36,11 @@ const EmailOutreach: React.FC<Props> = ({ user, onUserUpdate }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const REQUIRED_SCOPE = "https://www.googleapis.com/auth/gmail.send";
 
+  // Compute the user's active API key
+  const userKey = useMemo(() => {
+    return user.activeAiProvider === 'GEMINI' ? user.geminiApiKey : user.openaiApiKey;
+  }, [user]);
+
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [transmissionLogs]);
@@ -119,20 +124,21 @@ const EmailOutreach: React.FC<Props> = ({ user, onUserUpdate }) => {
   };
 
   const runMailValidator = async () => {
-    const apiKey = user.activeAiProvider === 'GEMINI' ? user.geminiApiKey : user.openaiApiKey;
-    if (leads.length === 0 || !apiKey) return;
+    if (leads.length === 0) return;
     setIsValidating(true);
     setStep('VALIDATION');
     try {
-      const validated = await validateEmailsAgent(user.activeAiProvider, apiKey, leads);
+      // Pass user's verified key to the validation agent
+      const validated = await validateEmailsAgent(leads, userKey);
       setLeads(validated);
-    } catch (err) { console.error(err); }
+    } catch (err: any) { 
+      console.error(err);
+      alert("AI Validation Node Fault: " + err.message);
+    }
     finally { setIsValidating(false); }
   };
 
   const generateDrafts = async () => {
-    const apiKey = user.activeAiProvider === 'GEMINI' ? user.geminiApiKey : user.openaiApiKey;
-    if (!apiKey) return;
     isAbortedRef.current = false;
     setStep('GENERATING');
     setProgress(0);
@@ -143,7 +149,8 @@ const EmailOutreach: React.FC<Props> = ({ user, onUserUpdate }) => {
       if (isAbortedRef.current) break;
       const lead = validLeads[i];
       try {
-        const res = await processOutreachWithAgent(user.activeAiProvider, apiKey, lead, user.emailConnection?.email || user.email, subject, body, mode);
+        // Pass user's verified key to the content agent
+        const res = await processOutreachWithAgent(lead, user.emailConnection?.email || user.email, subject, body, mode, userKey);
         newDrafts.push({
           id: `DFT-${i}-${Date.now()}`,
           recipient: lead.email,
@@ -151,7 +158,10 @@ const EmailOutreach: React.FC<Props> = ({ user, onUserUpdate }) => {
           subject: res.args.subject,
           body: res.args.body
         });
-      } catch (err) { console.error("Drafting Failed", err); }
+      } catch (err: any) { 
+        console.error("Drafting Failed", err); 
+        setTransmissionLogs(prev => [...prev, `⚠️ Drafting Error for ${lead.email}: ${err.message}`]);
+      }
       setProgress(Math.round(((i + 1) / validLeads.length) * 100));
     }
     if (!isAbortedRef.current) {
@@ -203,7 +213,6 @@ const EmailOutreach: React.FC<Props> = ({ user, onUserUpdate }) => {
           });
           setTransmissionLogs(prev => [...prev, `🚀 SUCCESS: Node ACK: ${res.messageId}`]);
           
-          // Simulation: Mark as opened after some time
           setTimeout(() => {
             if (Math.random() > 0.5) backendService.simulateEmailOpen(res.messageId!);
           }, 5000 + Math.random() * 10000);
@@ -537,7 +546,7 @@ const EmailOutreach: React.FC<Props> = ({ user, onUserUpdate }) => {
                     <p className="text-slate-500 text-sm italic">Uses "SEO Errors" data for uniquely drafted messages. Highest conversion yield.</p>
                   </div>
                   <div onClick={() => { setMode('MANUAL'); setStep('CONFIG'); }} className="p-14 rounded-[4rem] border-2 bg-slate-900 border-slate-800 transition-all cursor-pointer hover:border-slate-400 group shadow-2xl">
-                    <div className="w-24 h-24 bg-slate-800 rounded-3xl flex items-center justify-center text-slate-500 mb-10 group-hover:bg-slate-600 group-hover:text-white transition-all shadow-2xl">
+                    <div className="w-24 h-24 bg-slate-800 rounded-3xl flex items-center justify-center text-slate-500 mb-10 group-hover:bg-600 group-hover:text-white transition-all shadow-2xl">
                       <svg className="h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
                     </div>
                     <div className="text-3xl font-black text-white uppercase italic tracking-tighter mb-4 leading-none">Master Template</div>
