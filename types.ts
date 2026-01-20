@@ -1,4 +1,10 @@
 
+export enum OpportunityLevel {
+  HIGH = 'High',
+  MEDIUM = 'Medium',
+  LOW = 'Low'
+}
+
 export type AccountStatus = 'TRIAL' | 'PAID';
 export type CampaignMode = 'MANUAL' | 'AI_CUSTOM';
 export type OutreachStatus = 'CONNECTED' | 'DISCONNECTED' | 'FAILED' | 'VERIFIED';
@@ -46,7 +52,7 @@ export interface SEOAudit {
     hasIssues: boolean;
     reason: string;
   };
-  qualificationScore: number; // 0-100 based on severity of issues
+  opportunityLevel: OpportunityLevel;
 }
 
 export interface OutreachLead {
@@ -58,7 +64,6 @@ export interface OutreachLead {
   notes?: string;
   validationStatus?: ValidationStatus;
   validationReason?: string;
-  qualificationScore?: number;
 }
 
 export interface DraftEmail {

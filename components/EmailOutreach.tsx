@@ -111,14 +111,7 @@ const EmailOutreach: React.FC<Props> = ({ user, onUserUpdate }) => {
         const name = parts.find(p => p !== email && p !== website && p.length > 2) || 'Business Owner';
         const seoErrors = parts.length > 3 ? parts.slice(3).join(', ') : 'Mobile load speed, Missing meta tags';
         
-        return { 
-          email, 
-          businessName: name, 
-          website, 
-          seoErrors, 
-          validationStatus: 'UNCHECKED',
-          qualificationScore: 50 // Default score for manual uploads
-        };
+        return { email, businessName: name, website, seoErrors, validationStatus: 'UNCHECKED' };
       });
       setLeads(parsed);
     };

@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { SEOAudit } from '../types';
+import { SEOAudit, OpportunityLevel } from '../types';
 
 interface Props {
   leads: SEOAudit[];
@@ -20,7 +20,7 @@ const LeadsTable: React.FC<Props> = ({ leads }) => {
       "On-Page SEO Issues",
       "Technical SEO Issues",
       "Local SEO Issues",
-      "Qualification Score"
+      "Opportunity Level"
     ];
 
     const rows = leads.map(lead => [
@@ -32,7 +32,7 @@ const LeadsTable: React.FC<Props> = ({ leads }) => {
       lead.onPageIssues.join('; '),
       lead.technicalIssues.join('; '),
       `${lead.localSeoIssues.hasIssues ? 'Yes' : 'No'} - ${lead.localSeoIssues.reason}`,
-      lead.qualificationScore
+      lead.opportunityLevel
     ]);
 
     const csvContent = [
@@ -49,13 +49,6 @@ const LeadsTable: React.FC<Props> = ({ leads }) => {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-  };
-
-  const getPriorityInfo = (score: number) => {
-    if (score >= 80) return { label: 'CRITICAL', color: 'bg-red-600 text-white' };
-    if (score >= 60) return { label: 'HIGH', color: 'bg-orange-500 text-white' };
-    if (score >= 40) return { label: 'MEDIUM', color: 'bg-amber-100 text-amber-700' };
-    return { label: 'LOW', color: 'bg-slate-100 text-slate-600' };
   };
 
   return (
@@ -81,53 +74,51 @@ const LeadsTable: React.FC<Props> = ({ leads }) => {
               <th className="px-6 py-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider">On-Page Issues</th>
               <th className="px-6 py-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider">Technical Issues</th>
               <th className="px-6 py-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider">Local SEO</th>
-              <th className="px-6 py-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider text-center">Score / Priority</th>
+              <th className="px-6 py-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider text-center">Opp.</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {leads.map((lead, idx) => {
-              const priority = getPriorityInfo(lead.qualificationScore);
-              return (
-                <tr key={idx} className="hover:bg-slate-50/80 transition-colors group">
-                  <td className="px-6 py-4">
-                    <div className="font-bold text-slate-900 text-sm mb-0.5">{lead.businessName}</div>
-                    <div className="text-xs text-blue-600 truncate max-w-[150px]">{lead.websiteUrl}</div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="text-xs text-slate-600 font-medium">{lead.email}</div>
-                    <div className="text-[10px] text-slate-400">{lead.phone}</div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <ul className="space-y-0.5">
-                      {lead.onPageIssues.slice(0, 2).map((issue, i) => (
-                        <li key={i} className="text-[10px] text-slate-600 truncate max-w-[120px]">• {issue}</li>
-                      ))}
-                    </ul>
-                  </td>
-                  <td className="px-6 py-4">
-                     <ul className="space-y-0.5">
-                      {lead.technicalIssues.slice(0, 2).map((issue, i) => (
-                        <li key={i} className="text-[10px] text-slate-600 truncate max-w-[120px]">• {issue}</li>
-                      ))}
-                    </ul>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className={`text-[9px] px-1.5 py-0.5 rounded inline-block font-bold uppercase ${lead.localSeoIssues.hasIssues ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'}`}>
-                      {lead.localSeoIssues.hasIssues ? 'Issues' : 'Clean'}
-                    </div>
-                    <div className="text-[9px] text-slate-400 mt-1 truncate max-w-[100px]">{lead.localSeoIssues.reason}</div>
-                  </td>
-                  <td className="px-6 py-4 text-center">
-                    <div className="flex flex-col items-center gap-1">
-                      <div className="text-xs font-black text-slate-900">{lead.qualificationScore}</div>
-                      <span className={`text-[8px] font-black px-2 py-0.5 rounded-[4px] tracking-widest ${priority.color}`}>
-                        {priority.label}
-                      </span>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
+            {leads.map((lead, idx) => (
+              <tr key={idx} className="hover:bg-slate-50/80 transition-colors group">
+                <td className="px-6 py-4">
+                  <div className="font-bold text-slate-900 text-sm mb-0.5">{lead.businessName}</div>
+                  <div className="text-xs text-blue-600 truncate max-w-[150px]">{lead.websiteUrl}</div>
+                </td>
+                <td className="px-6 py-4">
+                  <div className="text-xs text-slate-600 font-medium">{lead.email}</div>
+                  <div className="text-[10px] text-slate-400">{lead.phone}</div>
+                </td>
+                <td className="px-6 py-4">
+                  <ul className="space-y-0.5">
+                    {lead.onPageIssues.slice(0, 2).map((issue, i) => (
+                      <li key={i} className="text-[10px] text-slate-600 truncate max-w-[120px]">• {issue}</li>
+                    ))}
+                  </ul>
+                </td>
+                <td className="px-6 py-4">
+                   <ul className="space-y-0.5">
+                    {lead.technicalIssues.slice(0, 2).map((issue, i) => (
+                      <li key={i} className="text-[10px] text-slate-600 truncate max-w-[120px]">• {issue}</li>
+                    ))}
+                  </ul>
+                </td>
+                <td className="px-6 py-4">
+                  <div className={`text-[9px] px-1.5 py-0.5 rounded inline-block font-bold uppercase ${lead.localSeoIssues.hasIssues ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'}`}>
+                    {lead.localSeoIssues.hasIssues ? 'Issues' : 'Clean'}
+                  </div>
+                  <div className="text-[9px] text-slate-400 mt-1 truncate max-w-[100px]">{lead.localSeoIssues.reason}</div>
+                </td>
+                <td className="px-6 py-4 text-center">
+                  <span className={`text-[10px] font-bold px-2 py-1 rounded-lg ${
+                    lead.opportunityLevel === OpportunityLevel.HIGH ? 'bg-orange-600 text-white' :
+                    lead.opportunityLevel === OpportunityLevel.MEDIUM ? 'bg-amber-100 text-amber-700' :
+                    'bg-slate-100 text-slate-600'
+                  }`}>
+                    {lead.opportunityLevel}
+                  </span>
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>

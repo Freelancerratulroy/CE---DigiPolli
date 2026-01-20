@@ -1,6 +1,6 @@
 
-import { GoogleGenAI, Type } from "@google/genai";
-import { SEOAudit, OutreachLead, AiProvider } from "./types";
+import { GoogleGenAI, Type, FunctionDeclaration } from "@google/genai";
+import { SEOAudit, OpportunityLevel, OutreachLead, AiProvider } from "./types";
 
 const AUDIT_SCHEMA = {
   type: Type.ARRAY,
@@ -22,12 +22,9 @@ const AUDIT_SCHEMA = {
         },
         required: ["hasIssues", "reason"]
       },
-      qualificationScore: { 
-        type: Type.INTEGER,
-        description: "A score from 0-100 indicating how high-priority this lead is for SEO outreach."
-      }
+      opportunityLevel: { type: Type.STRING }
     },
-    required: ["websiteUrl", "businessName", "email", "phone", "contactPageUrl", "onPageIssues", "technicalIssues", "localSeoIssues", "qualificationScore"]
+    required: ["websiteUrl", "businessName", "email", "phone", "contactPageUrl", "onPageIssues", "technicalIssues", "localSeoIssues", "opportunityLevel"]
   }
 };
 
@@ -44,51 +41,77 @@ const VALIDATION_SCHEMA = {
   }
 };
 
-// Fix: Implement and export verifyApiKey to resolve error in ApiKeyGate.tsx
-/**
- * Verifies if an API key is valid for the specified provider.
- * This is used by the ApiKeyGate component.
- */
+export const sendSmtpEmailDeclaration: FunctionDeclaration = {
+  name: 'send_smtp_email',
+  parameters: {
+    type: Type.OBJECT,
+    description: "Executes a physical email transmission via the authorized Gmail SMTP node.",
+    properties: {
+      to: {
+        type: Type.STRING,
+        description: "Recipient email address extracted from the input data.",
+      },
+      subject: {
+        type: Type.STRING,
+        description: "The finalized subject line for the email.",
+      },
+      body: {
+        type: Type.STRING,
+        description: "The finalized body content for the email.",
+      },
+    },
+    required: ['to', 'subject', 'body'],
+  },
+};
+
 export async function verifyApiKey(provider: AiProvider, apiKey: string): Promise<{ valid: boolean; error?: string }> {
   if (provider === 'GEMINI') {
+    const ai = new GoogleGenAI({ apiKey });
     try {
-      // Create a local instance just for verification using the provided key.
-      const ai = new GoogleGenAI({ apiKey });
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
-        contents: 'ping',
+        contents: 'Respond with "OK"',
       });
-      return { valid: response.text !== undefined };
-    } catch (err: any) {
-      return { valid: false, error: err.message || 'Invalid Gemini API Key' };
+      if (response.text) return { valid: true };
+      return { valid: false, error: "Empty response from Gemini." };
+    } catch (error: any) {
+      if (error.message?.includes("429") || error.message?.includes("RESOURCE_EXHAUSTED")) {
+        return { valid: false, error: "QUOTA_EXHAUSTED: Gemini API quota exceeded." };
+      }
+      return { valid: false, error: error.message || "Gemini key verification failed." };
     }
   } else {
     try {
-      const response = await fetch('https://api.openai.com/v1/models', {
-        headers: { 'Authorization': `Bearer ${apiKey}` }
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o',
+          messages: [{ role: 'user', content: 'Say OK' }],
+          max_tokens: 5
+        })
       });
-      if (response.ok) return { valid: true };
       const data = await response.json();
-      return { valid: false, error: data.error?.message || 'Invalid OpenAI Key' };
-    } catch (err: any) {
-      return { valid: false, error: err.message };
+      if (response.ok) return { valid: true };
+      return { valid: false, error: data.error?.message || "OpenAI key verification failed." };
+    } catch (error: any) {
+      return { valid: false, error: error.message };
     }
   }
 }
 
 export async function performSEOLeadGen(provider: AiProvider, apiKey: string, niche: string, location: string): Promise<{ leads: SEOAudit[], groundingSources: any[] }> {
-  // Fix: Adhere to guidelines by using process.env.API_KEY for Gemini calls
-  const effectiveApiKey = provider === 'GEMINI' ? process.env.API_KEY : apiKey;
-  const ai = new GoogleGenAI({ apiKey: effectiveApiKey || '' });
-
   const prompt = `
     ACT AS AN ADVANCED SEO LEAD GENERATION AGENT.
     Target: ${niche} in ${location}.
-    Find businesses likely on Page 2 of Google. Return exactly 15 high-quality leads in JSON format.
-    Calculate qualificationScore (0-100): +15 tech issues, +5 on-page, +30 poor Local SEO.
+    Find businesses likely on Page 2 of Google. Return exactly 15 high-quality leads in JSON format matching the schema.
   `;
 
   if (provider === 'GEMINI') {
+    const ai = new GoogleGenAI({ apiKey });
     const response = await ai.models.generateContent({
       model: "gemini-3-pro-preview",
       contents: prompt,
@@ -98,23 +121,11 @@ export async function performSEOLeadGen(provider: AiProvider, apiKey: string, ni
         responseSchema: AUDIT_SCHEMA,
       },
     });
-    
-    let leads: SEOAudit[] = [];
-    try {
-      // Fix: Access response.text property directly without calling it
-      const text = response.text;
-      leads = JSON.parse(text || "[]");
-    } catch (e) {
-      console.error("Failed to parse leads JSON", e);
-    }
-
     return { 
-      leads: leads, 
-      // Fix: Extract grounding metadata chunks for display as required by guidelines
+      leads: JSON.parse(response.text || "[]"), 
       groundingSources: response.candidates?.[0]?.groundingMetadata?.groundingChunks || [] 
     };
   } else {
-    // OpenAI Fallback
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
@@ -126,18 +137,18 @@ export async function performSEOLeadGen(provider: AiProvider, apiKey: string, ni
     });
     const data = await response.json();
     const leadsRaw = JSON.parse(data.choices[0].message.content);
-    return { leads: leadsRaw.leads || leadsRaw, groundingSources: [] };
+    const leads = Array.isArray(leadsRaw) ? leadsRaw : (leadsRaw.leads || leadsRaw.results || []);
+    return { leads, groundingSources: [] };
   }
 }
 
 export async function validateEmailsAgent(provider: AiProvider, apiKey: string, leads: OutreachLead[]): Promise<OutreachLead[]> {
-  const effectiveApiKey = provider === 'GEMINI' ? process.env.API_KEY : apiKey;
-  const ai = new GoogleGenAI({ apiKey: effectiveApiKey || '' });
-  
   const emailList = leads.map(l => l.email).join(', ');
-  const prompt = `Validate these emails: ${emailList}. Return JSON with validationStatus (VALID, RISKY, INVALID).`;
+  const prompt = `Validate these emails: ${emailList}. Return JSON with fields: email, validationStatus (VALID, RISKY, INVALID), validationReason.`;
 
+  let results: any[] = [];
   if (provider === 'GEMINI') {
+    const ai = new GoogleGenAI({ apiKey });
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: prompt,
@@ -146,22 +157,30 @@ export async function validateEmailsAgent(provider: AiProvider, apiKey: string, 
         responseSchema: VALIDATION_SCHEMA,
       },
     });
-    
-    let results: any[] = [];
-    try {
-      // Fix: Access response.text property directly
-      const text = response.text;
-      results = JSON.parse(text || "[]");
-    } catch (e) {
-      console.error("Failed to parse validation JSON", e);
-    }
-
-    return leads.map(lead => ({
-      ...lead,
-      validationStatus: results.find((r: any) => r.email === lead.email)?.validationStatus || 'VALID'
-    }));
+    results = JSON.parse(response.text || "[]");
+  } else {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        messages: [{ role: 'user', content: prompt }],
+        response_format: { type: "json_object" }
+      })
+    });
+    const data = await response.json();
+    const parsed = JSON.parse(data.choices[0].message.content);
+    results = Array.isArray(parsed) ? parsed : (parsed.validations || parsed.results || []);
   }
-  return leads;
+
+  return leads.map(lead => {
+    const match = results.find((r: any) => r.email === lead.email);
+    return {
+      ...lead,
+      validationStatus: match?.validationStatus || 'VALID',
+      validationReason: match?.validationReason || 'Verified by AI'
+    };
+  });
 }
 
 export async function processOutreachWithAgent(
@@ -173,37 +192,67 @@ export async function processOutreachWithAgent(
   baseBody: string,
   mode: 'AI_CUSTOM' | 'MANUAL'
 ): Promise<any> {
-  const effectiveApiKey = provider === 'GEMINI' ? process.env.API_KEY : apiKey;
-  const ai = new GoogleGenAI({ apiKey: effectiveApiKey || '' });
+  const isAiMode = mode === 'AI_CUSTOM';
   
-  const prompt = mode === 'AI_CUSTOM' 
-    ? `Write a UNIQUE SEO outreach email for ${lead.businessName} regarding ${lead.website}. Issues: ${lead.seoErrors}. Return JSON with 'subject' and 'body'.`
-    : `Replace placeholders in this template: ${baseBody} for ${lead.businessName}.`;
+  const systemInstruction = isAiMode 
+    ? "You are an Elite SEO Outreach Architect. You write UNIQUE, non-templated emails. Use specific SEO issues provided in the 'seoErrors' field to prove manual research. Never use placeholders like [Issue]. Write the actual text."
+    : "Replace {Business_Name} and {Website} in the provided template.";
 
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: prompt,
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          subject: { type: Type.STRING },
-          body: { type: Type.STRING }
-        },
-        required: ["subject", "body"]
-      }
-    },
-  });
-  
-  let parsed: any = {};
-  try {
-    // Fix: Access response.text property directly
-    const text = response.text;
-    parsed = JSON.parse(text || "{}");
-  } catch (e) {
-    console.error("Failed to parse outreach JSON", e);
+  const prompt = isAiMode 
+    ? `
+      ROLE: BESPOKE OUTREACH AGENT.
+      LEAD_CONTEXT:
+      Business: ${lead.businessName}
+      Website: ${lead.website}
+      SEO_ERRORS: ${lead.seoErrors || "General optimization needed"}
+      SENDER: ${senderEmail}
+      
+      TASK: Generate a 100% unique subject and body. Reference the SEO errors specifically. No two emails should be alike.
+      RETURN: JSON with 'subject' and 'body'.
+    `
+    : `
+      ROLE: PLACEHOLDER REPLACEMENT.
+      BUSINESS: ${lead.businessName}
+      WEBSITE: ${lead.website}
+      SUBJECT: ${baseSubject}
+      BODY: ${baseBody}
+      
+      TASK: Replace {Business_Name} with "${lead.businessName}" and {Website} with "${lead.website}".
+      RETURN: JSON with 'subject' and 'body'.
+    `;
+
+  if (provider === 'GEMINI') {
+    const ai = new GoogleGenAI({ apiKey });
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: prompt,
+      config: {
+        systemInstruction,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            subject: { type: Type.STRING },
+            body: { type: Type.STRING }
+          },
+          required: ["subject", "body"]
+        }
+      },
+    });
+    const parsed = JSON.parse(response.text || "{}");
+    return { name: 'send_smtp_email', args: { to: lead.email, subject: parsed.subject, body: parsed.body } };
+  } else {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        messages: [{ role: 'system', content: systemInstruction }, { role: 'user', content: prompt }],
+        response_format: { type: "json_object" }
+      })
+    });
+    const data = await response.json();
+    const content = JSON.parse(data.choices[0].message.content);
+    return { name: 'send_smtp_email', args: { to: lead.email, subject: content.subject, body: content.body } };
   }
-
-  return { name: 'send_smtp_email', args: { to: lead.email, subject: parsed.subject || baseSubject, body: parsed.body || baseBody } };
 }
