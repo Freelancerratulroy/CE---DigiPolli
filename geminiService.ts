@@ -50,66 +50,70 @@ const AUDIT_SCHEMA = {
  */
 export async function verifyApiKey(provider: AiProvider, apiKey: string): Promise<{ valid: boolean; error?: string }> {
   const cleanKey = apiKey?.trim();
-  if (!cleanKey) return { valid: false, error: "Invalid API Key: Key is empty." };
+  if (!cleanKey) return { valid: false, error: "API Key is empty." };
   
-  // Strict Handshake for Gemini
   if (provider === 'GEMINI') {
     try {
+      // REAL WORLD HANDSHAKE:
       const ai = new GoogleGenAI({ apiKey: cleanKey });
       
-      // Perform a minimal real request to verify the key's validity and quota
+      // Attempt a minimal content generation call to verify key permissions and status
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
-        contents: 'Verify Connection Handshake',
+        contents: 'Verify Node Handshake 200',
         config: { 
           maxOutputTokens: 2,
           thinkingConfig: { thinkingBudget: 0 }
         }
       });
       
-      // If we receive any response without an error being thrown, the key is valid.
+      // If we got a result without a catch block, the key is 100% verified
       if (response && response.text) {
         return { valid: true };
       }
       
-      return { valid: false, error: "Invalid API Key – Connection Failed. (Empty Response)" };
+      return { valid: false, error: "INVALID API KEY - Handshake Rejected (Empty Response)" };
     } catch (err: any) {
       console.error("STRICT_AUTH_FAIL:", err);
       
-      let errorMsg = "Invalid API Key – Connection Failed.";
+      let errorMsg = "INVALID API KEY - Connection Failed.";
       const errStr = (err.message || "").toLowerCase();
 
       if (errStr.includes("api_key_invalid") || errStr.includes("invalid api key")) {
-        errorMsg = "Your API key is wrong. Please check your Gemini credentials.";
-      } else if (errStr.includes("quota") || errStr.includes("limit") || errStr.includes("429")) {
-        errorMsg = "Quota Exhausted: Your key has no remaining credits or billing is disabled.";
+        errorMsg = "INVALID API KEY - Handshake Failed. Your key is wrong.";
+      } else if (errStr.includes("quota") || errStr.includes("exhausted") || errStr.includes("429")) {
+        errorMsg = "QUOTA EXHAUSTED - This key has no remaining credits or billing is disabled.";
       } else if (errStr.includes("permission") || errStr.includes("403")) {
-        errorMsg = "Permission Denied: This key does not have access to Gemini 3 series models.";
-      } else if (errStr.includes("network") || errStr.includes("fetch")) {
-        errorMsg = "Network Error: Could not reach Google API Servers.";
+        errorMsg = "PERMISSION DENIED - This key is blocked from accessing the Gemini model.";
+      } else if (errStr.includes("not found") || errStr.includes("404")) {
+        errorMsg = "MODEL UNAVAILABLE - The specified AI node is offline for this region.";
+      } else if (errStr.includes("fetch") || errStr.includes("network")) {
+        errorMsg = "NETWORK FAULT - Could not reach Google Servers. Check your connection.";
       }
 
       return { valid: false, error: errorMsg };
     }
   }
 
-  // Basic check for OpenAI (Simulation since we are focused on Gemini fixes)
+  // Placeholder for OpenAI validation
   if (provider === 'OPENAI') {
+    const isValidFormat = cleanKey.startsWith('sk-') && cleanKey.length > 30;
     return { 
-      valid: cleanKey.startsWith('sk-') && cleanKey.length > 20, 
-      error: cleanKey.startsWith('sk-') ? undefined : 'Your OpenAI key is wrong (Invalid Format).' 
+      valid: isValidFormat, 
+      error: isValidFormat ? undefined : 'INVALID OPENAI KEY - Incorrect Format.' 
     };
   }
 
-  return { valid: false, error: "Unsupported Provider" };
+  return { valid: false, error: "Unsupported AI Provider Socket" };
 }
 
-export async function performSEOLeadGen(niche: string, location: string, apiKey: string): Promise<{ leads: SEOAudit[], groundingSources: any[] }> {
+export async function performSEOLeadGen(niche: string, location: string, apiKey: string): Promise<{ leads: SEOAudit[] }> {
   const ai = getAi(apiKey);
   const prompt = `
-    ACT AS AN ADVANCED SEO LEAD GENERATION AGENT.
+    ACT AS AN ELITE SEO LEAD GENERATION AGENT.
     Target: ${niche} in ${location}.
-    Find businesses likely on Page 2 of Google. Return exactly 15 high-quality leads in JSON format matching the schema.
+    Find businesses likely on Page 2 of Google for this niche. Analyze their digital footprint.
+    Return exactly 15 high-quality leads in JSON format matching the schema.
   `;
 
   const response = await ai.models.generateContent({
@@ -119,20 +123,18 @@ export async function performSEOLeadGen(niche: string, location: string, apiKey:
       tools: [{ googleSearch: {} }],
       responseMimeType: "application/json",
       responseSchema: AUDIT_SCHEMA,
+      thinkingConfig: { thinkingBudget: 4096 } // Moderate budget for precise SERP analysis
     },
   });
   
   const leads = JSON.parse(response.text || "[]");
-  return { 
-    leads, 
-    groundingSources: response.candidates?.[0]?.groundingMetadata?.groundingChunks || [] 
-  };
+  return { leads };
 }
 
 export async function validateEmailsAgent(leads: OutreachLead[], apiKey: string): Promise<OutreachLead[]> {
   const ai = getAi(apiKey);
   const emailList = leads.map(l => l.email).join(', ');
-  const prompt = `Validate these emails for deliverability: ${emailList}. Return JSON array with validationStatus and reason.`;
+  const prompt = `Validate these emails for deliverability: ${emailList}. Return JSON array with validationStatus ('VALID', 'RISKY', 'INVALID') and reason.`;
 
   const response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
@@ -177,14 +179,14 @@ export async function processOutreachWithAgent(
   const isAiMode = mode === 'AI_CUSTOM';
   
   const prompt = isAiMode 
-    ? `Write a personalized SEO outreach email for ${lead.businessName} focusing on: ${lead.seoErrors}.`
+    ? `Write a highly personalized SEO outreach email for ${lead.businessName} focusing on site errors like: ${lead.seoErrors}.`
     : `Replace placeholders in this template: ${baseBody} for ${lead.businessName}.`;
 
   const response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
     contents: prompt,
     config: {
-      systemInstruction: isAiMode ? "Elite SEO Outreach Architect" : "Template Injector",
+      systemInstruction: isAiMode ? "Elite SEO Outreach Strategist" : "Template Personalization Engine",
       responseMimeType: "application/json",
       responseSchema: {
         type: Type.OBJECT,
