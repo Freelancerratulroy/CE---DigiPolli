@@ -1,47 +1,6 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { SEOAudit, OutreachLead, OpportunityLevel, AiProvider } from "./types";
-
-/* ===================== SCHEMA ===================== */
-
-const AUDIT_SCHEMA = {
-  type: Type.ARRAY,
-  items: {
-    type: Type.OBJECT,
-    properties: {
-      websiteUrl: { type: Type.STRING },
-      businessName: { type: Type.STRING },
-      email: { type: Type.STRING },
-      phone: { type: Type.STRING },
-      contactPageUrl: { type: Type.STRING },
-      onPageIssues: { type: Type.ARRAY, items: { type: Type.STRING } },
-      technicalIssues: { type: Type.ARRAY, items: { type: Type.STRING } },
-      localSeoIssues: {
-        type: Type.OBJECT,
-        properties: {
-          hasIssues: { type: Type.BOOLEAN },
-          reason: { type: Type.STRING }
-        },
-        required: ["hasIssues", "reason"]
-      },
-      opportunityLevel: {
-        type: Type.STRING,
-        enum: Object.values(OpportunityLevel)
-      }
-    },
-    required: [
-      "websiteUrl",
-      "businessName",
-      "email",
-      "phone",
-      "contactPageUrl",
-      "onPageIssues",
-      "technicalIssues",
-      "localSeoIssues",
-      "opportunityLevel"
-    ]
-  }
-};
+import { SEOAudit, OutreachLead, OpportunityLevel, AiProvider, ApiConfig } from "./types";
 
 /* ===================== HELPERS ===================== */
 
@@ -63,73 +22,108 @@ function extractJson(text: string): any {
   }
 }
 
-/* ===================== API VERIFICATION ===================== */
+/* ===================== API VERIFICATION GATE ===================== */
 
 /**
- * REAL SERVER-SIDE HANDSHAKE
- * Mirroring the implementation of the working tool:
- * 1. Checks for a real response from the Gemini API.
- * 2. Specifically looks for quota or authentication errors.
+ * PRODUCTION-GRADE GENERIC API HANDSHAKE
+ * Used for custom API nodes. Performs a real HTTP GET/POST to verify connectivity.
+ */
+export async function verifyGenericApi(config: ApiConfig): Promise<{ valid: boolean; status?: number; error?: string }> {
+  const { apiKey, baseUrl, authType, testEndpoint } = config;
+  const ERROR_MSG = "INVALID API KEY – CONNECTION FAILED";
+
+  if (!baseUrl || !testEndpoint || !apiKey) {
+    return { valid: false, error: ERROR_MSG };
+  }
+
+  const cleanBase = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+  const cleanEndpoint = testEndpoint.startsWith('/') ? testEndpoint : `/${testEndpoint}`;
+  const url = `${cleanBase}${cleanEndpoint}`;
+
+  const headers: Record<string, string> = {
+    'Accept': 'application/json',
+    'Content-Type': 'application/json',
+  };
+
+  if (authType === 'Bearer' || authType === 'OAuth') {
+    headers['Authorization'] = `Bearer ${apiKey}`;
+  } else if (authType === 'API-Key') {
+    headers['X-API-Key'] = apiKey;
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: headers,
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    const bodyText = await response.text();
+    if (response.ok && bodyText.length > 0) {
+      return { valid: true, status: response.status };
+    }
+
+    return { valid: false, status: response.status, error: ERROR_MSG };
+  } catch (err: any) {
+    return { valid: false, error: ERROR_MSG };
+  }
+}
+
+/**
+ * REAL-TIME GEMINI HANDSHAKE (NO FAKING)
+ * This function triggers a real API call to Google's Gemini servers.
+ * If the key is fake or wrong, Google returns an error, and we block access.
  */
 export async function verifyApiKey(
   provider: AiProvider,
   apiKey?: string
 ): Promise<{ valid: boolean; error?: string }> {
-  const key = apiKey || process.env.API_KEY;
-  if (!key) return { valid: false, error: "Handshake Failed: No API Key detected in current context." };
+  // If a manual key is provided, we MUST use it. Otherwise, we use the injected one.
+  const keyToVerify = apiKey || process.env.API_KEY;
+  const ERROR_MSG = "INVALID API KEY – CONNECTION FAILED";
 
-  if (provider === "GEMINI") {
-    try {
-      const ai = new GoogleGenAI({ apiKey: key });
-
-      // We perform a real generation to verify the key is actually active and has billing enabled.
-      // This is the "Working Implementation" behavior.
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: "Validate connection.",
-        config: {
-          maxOutputTokens: 10,
-          thinkingConfig: { thinkingBudget: 0 }
-        }
-      });
-
-      if (response && response.text) {
-        return { valid: true };
-      }
-      
-      return { valid: false, error: "The AI node returned an empty handshake response." };
-    } catch (err: any) {
-      const msg = (err?.message || "").toLowerCase();
-      
-      if (msg.includes("requested entity was not found")) {
-        return { valid: false, error: "RESELECT_REQUIRED: The selected project/key is no longer valid." };
-      }
-      if (msg.includes("401") || msg.includes("403") || msg.includes("invalid")) {
-        return { valid: false, error: "Authentication Failed: The provided key was rejected by the server." };
-      }
-      if (msg.includes("429") || msg.includes("quota")) {
-        return { valid: false, error: "Resource Exhausted: You have exceeded your API quota/limit." };
-      }
-
-      return { valid: false, error: `Critical Node Error: ${err.message || 'Unknown network failure'}` };
-    }
+  if (!keyToVerify || keyToVerify.trim().length < 10) {
+    return { valid: false, error: ERROR_MSG };
   }
 
-  // Fallback for OpenAI if requested, following similar logic
-  if (provider === "OPENAI" && key) {
-    try {
-      const response = await fetch("https://api.openai.com/v1/models", {
-        headers: { "Authorization": `Bearer ${key}` }
-      });
-      if (response.ok) return { valid: true };
-      const data = await response.json();
-      return { valid: false, error: data.error?.message || "OpenAI Handshake Denied." };
-    } catch (err: any) {
-      return { valid: false, error: "OpenAI Connection Timeout." };
-    }
-  }
+  try {
+    // Initialize a REAL SDK instance with the key provided
+    const ai = new GoogleGenAI({ apiKey: keyToVerify });
+    
+    /**
+     * CRITICAL: We perform a real "Ping" to the Gemini model.
+     * If the key is '123' or 'fake-key', this call will throw an exception
+     * from the Google backend.
+     */
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: "Handshake: respond with 'OK'.",
+      config: {
+        maxOutputTokens: 5,
+        thinkingConfig: { thinkingBudget: 0 }
+      }
+    });
 
-  return { valid: false, error: "Unsupported node configuration." };
+    // Verification check: Did we get a valid text response?
+    if (response && response.text && response.text.includes('OK')) {
+      return { valid: true };
+    }
+    
+    // If the response structure is unexpected
+    return { valid: false, error: ERROR_MSG };
+  } catch (err: any) {
+    /**
+     * If the key is wrong, the SDK throws an error like:
+     * [GoogleGenAI Error]: API_KEY_INVALID
+     */
+    console.error("[CRITICAL_HANDSHAKE_FAIL]", err.message);
+    return { valid: false, error: ERROR_MSG };
+  }
 }
 
 /* ===================== SEO LEAD GENERATION ===================== */
@@ -138,7 +132,7 @@ export async function performSEOLeadGen(
   niche: string,
   location: string
 ): Promise<{ leads: SEOAudit[]; groundingSources?: any[] }> {
-  // Always instantiate a new client right before making an API call to ensure it uses the most up-to-date API key.
+  // Use the verified key for the actual mission
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
   const prompt = `
@@ -147,54 +141,50 @@ NICHE: ${niche}
 LOCATION: ${location}
 
 TASK:
-1. Use Google Search to find businesses in the specified niche and location.
-2. Specifically target businesses that are ranking on Page 2 or lower of search results.
-3. Perform a high-level SEO audit for each business (Website, On-Page, Technical, Local Presence).
-4. Return the data for exactly 15 businesses.
-
-OUTPUT FORMAT:
-- Strict JSON array of objects following the responseSchema.
-- No conversational text.
+1. Search for businesses in the specified niche and location.
+2. Return exactly 15 business results.
+3. Format output as JSON:
+[
+  {
+    "websiteUrl": "string",
+    "businessName": "string",
+    "email": "string",
+    "phone": "string",
+    "contactPageUrl": "string",
+    "onPageIssues": ["string"],
+    "technicalIssues": ["string"],
+    "localSeoIssues": { "hasIssues": boolean, "reason": "string" },
+    "opportunityLevel": "High"
+  }
+]
 `;
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3-pro-image-preview", // Upgraded to support Google Search tools as per guidelines
+      model: "gemini-3-pro-preview",
       contents: prompt,
       config: {
         tools: [{ googleSearch: {} }],
-        responseMimeType: "application/json",
-        responseSchema: AUDIT_SCHEMA,
-        thinkingConfig: { thinkingBudget: 4096 }
+        thinkingConfig: { thinkingBudget: 8192 }
       }
     });
 
-    const parsed = extractJson(response.text || "[]") || [];
+    const rawText = response.text || "";
+    const parsed = extractJson(rawText) || [];
+    
     return {
-      leads: Array.isArray(parsed) ? parsed.slice(0, 15) : [],
-      groundingSources:
-        response.candidates?.[0]?.groundingMetadata?.groundingChunks || []
+      leads: Array.isArray(parsed) ? parsed : [],
+      groundingSources: response.candidates?.[0]?.groundingMetadata?.groundingChunks || []
     };
   } catch (err: any) {
-    console.error("Gemini SEO Lead Gen Error:", err);
-    throw err; // Bubbling up for specialized error handling in App.tsx
+    console.error("SEO Gen Error:", err);
+    throw err;
   }
 }
 
-/* ===================== EMAIL VALIDATION ===================== */
-
-export async function validateEmailsAgent(
-  leads: OutreachLead[]
-): Promise<OutreachLead[]> {
+export async function validateEmailsAgent(leads: OutreachLead[]): Promise<OutreachLead[]> {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
-  const prompt = `
-Analyze and validate the following list of business emails for deliverability.
-Return a JSON array of results indicating if they are VALID, RISKY, or INVALID.
-
-Emails: ${leads.map(l => l.email).join(", ")}
-`;
-
+  const prompt = `Validate deliverability: ${leads.map(l => l.email).join(", ")}`;
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
@@ -207,10 +197,7 @@ Emails: ${leads.map(l => l.email).join(", ")}
             type: Type.OBJECT,
             properties: {
               email: { type: Type.STRING },
-              validationStatus: {
-                type: Type.STRING,
-                enum: ["VALID", "RISKY", "INVALID"]
-              },
+              validationStatus: { type: Type.STRING, enum: ["VALID", "RISKY", "INVALID"] },
               validationReason: { type: Type.STRING }
             },
             required: ["email", "validationStatus", "validationReason"]
@@ -218,86 +205,30 @@ Emails: ${leads.map(l => l.email).join(", ")}
         }
       }
     });
-
-    const results = extractJson(response.text || "[]") || [];
-
-    return leads.map(lead => {
-      const match = results.find((r: any) => r.email === lead.email);
-      return {
-        ...lead,
-        validationStatus: match?.validationStatus || "VALID",
-        validationReason: match?.validationReason || "AI verified deliverability"
-      };
-    });
+    return extractJson(response.text || "[]");
   } catch (err: any) {
-    console.error("Email Validation Agent Error:", err);
-    return leads.map(l => ({ ...l, validationStatus: "UNCHECKED", validationReason: "AI Agent validation failed" }));
+    return leads.map(l => ({ ...l, validationStatus: "UNCHECKED" }));
   }
 }
 
-/* ===================== OUTREACH EMAIL AGENT ===================== */
-
-export async function processOutreachWithAgent(
-  lead: OutreachLead,
-  senderEmail: string,
-  baseSubject: string,
-  baseBody: string,
-  mode: "AI_CUSTOM" | "MANUAL"
-) {
+export async function processOutreachWithAgent(lead: OutreachLead, senderEmail: string, baseSubject: string, baseBody: string, mode: "AI_CUSTOM" | "MANUAL") {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
-  const prompt =
-    mode === "AI_CUSTOM"
-      ? `Write a highly personalized, consultative SEO outreach email for ${lead.businessName}.
-Focus on these identified SEO gaps: ${lead.seoErrors || 'Missing meta tags and slow mobile load speed'}.
-The tone should be professional, helpful, and not pushy.`
-      : `Insert the specific business details for ${lead.businessName} into the following email template, ensuring it sounds natural and professional:\n\n${baseBody}`;
-
+  const prompt = mode === "AI_CUSTOM" ? `Write personalized SEO email for ${lead.businessName}` : `Use template for ${lead.businessName}`;
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: prompt,
       config: {
-        systemInstruction:
-          mode === "AI_CUSTOM"
-            ? "You are an elite SEO outreach expert specializing in cold B2B communications that convert."
-            : "You are a precise email template processing engine.",
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
-          properties: {
-            subject: { type: Type.STRING },
-            body: { type: Type.STRING }
-          },
+          properties: { subject: { type: Type.STRING }, body: { type: Type.STRING } },
           required: ["subject", "body"]
         }
       }
     });
-
-    const parsed = extractJson(response.text || "{}") || {
-      subject: baseSubject,
-      body: baseBody
-    };
-
-    return {
-      name: "send_smtp_email",
-      args: {
-        from: senderEmail,
-        to: lead.email,
-        subject: parsed.subject,
-        body: parsed.body
-      }
-    };
+    return { name: "send_email", args: extractJson(response.text || "{}") };
   } catch (err: any) {
-    console.error("Outreach Agent Error:", err);
-    return {
-      name: "send_smtp_email",
-      args: {
-        from: senderEmail,
-        to: lead.email,
-        subject: baseSubject,
-        body: baseBody
-      }
-    };
+    return { name: "send_email", args: { subject: baseSubject, body: baseBody } };
   }
 }

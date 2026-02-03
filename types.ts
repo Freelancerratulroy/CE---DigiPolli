@@ -10,7 +10,15 @@ export type CampaignMode = 'MANUAL' | 'AI_CUSTOM';
 export type OutreachStatus = 'CONNECTED' | 'DISCONNECTED' | 'FAILED' | 'VERIFIED';
 export type ValidationStatus = 'VALID' | 'RISKY' | 'INVALID' | 'UNCHECKED';
 export type ApiKeyStatus = 'UNSET' | 'VERIFIED' | 'FAILED' | 'ERROR';
-export type AiProvider = 'GEMINI' | 'OPENAI';
+export type AiProvider = 'GEMINI' | 'OPENAI' | 'CUSTOM';
+
+export interface ApiConfig {
+  providerName: string;
+  apiKey: string;
+  baseUrl: string;
+  authType: 'Bearer' | 'API-Key' | 'OAuth';
+  testEndpoint: string;
+}
 
 export interface User {
   id: string;
@@ -28,6 +36,9 @@ export interface User {
   geminiKeyStatus: ApiKeyStatus;
   openaiApiKey?: string;
   openaiKeyStatus: ApiKeyStatus;
+  
+  // Generic API Config
+  apiConfig?: ApiConfig;
   
   apiKeyVerifiedAt?: string;
   emailConnection?: {
@@ -60,7 +71,7 @@ export interface OutreachLead {
   businessName?: string;
   website?: string;
   location?: string;
-  seoErrors?: string; // New field for detailed AI personalization
+  seoErrors?: string;
   notes?: string;
   validationStatus?: ValidationStatus;
   validationReason?: string;
@@ -116,7 +127,7 @@ export interface ActivityLog {
   userId: string;
   userEmail: string;
   accountStatus: AccountStatus;
-  type: 'LEAD_GEN' | 'CAMPAIGN' | 'SECURITY_EVENT' | 'VALIDATION';
+  type: 'LEAD_GEN' | 'CAMPAIGN' | 'SECURITY_EVENT' | 'VALIDATION' | 'API_VERIFICATION';
   input: {
     niche?: string;
     location?: string;
@@ -127,6 +138,7 @@ export interface ActivityLog {
     status?: string;
     scheduledTime?: string;
     emailCount?: number;
+    provider?: string;
   };
   output: {
     rowCount: number;
@@ -134,6 +146,7 @@ export interface ActivityLog {
     success?: boolean;
     error?: string;
     validCount?: number;
+    httpStatus?: number;
   };
 }
 

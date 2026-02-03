@@ -4,9 +4,10 @@ import { SEOAudit, OpportunityLevel } from '../types';
 
 interface Props {
   leads: SEOAudit[];
+  groundingSources?: any[];
 }
 
-const LeadsTable: React.FC<Props> = ({ leads }) => {
+const LeadsTable: React.FC<Props> = ({ leads, groundingSources }) => {
   if (leads.length === 0) return null;
 
   const downloadCSV = () => {
@@ -122,6 +123,37 @@ const LeadsTable: React.FC<Props> = ({ leads }) => {
           </tbody>
         </table>
       </div>
+
+      {groundingSources && groundingSources.length > 0 && (
+        <div className="px-6 py-6 bg-slate-50 border-t border-slate-200">
+          <div className="flex items-center gap-2 mb-4">
+            <div className="bg-blue-600 p-1.5 rounded-lg">
+              <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+            </div>
+            <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest italic">Verification Sources (Google Search)</h4>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {groundingSources.map((source, i) => (
+              source.web && (
+                <a 
+                  key={i} 
+                  href={source.web.uri} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="text-[10px] font-bold text-blue-600 hover:text-blue-700 bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex items-center gap-2 transition-all hover:shadow-md active:scale-95"
+                >
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                  </svg>
+                  {source.web.title || source.web.uri}
+                </a>
+              )
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

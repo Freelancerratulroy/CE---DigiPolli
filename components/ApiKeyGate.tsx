@@ -1,155 +1,193 @@
 
 import React, { useState, useEffect } from 'react';
-import { User, AiProvider } from '../types';
+import { User } from '../types';
 import { verifyApiKey } from '../geminiService';
 import { backendService } from '../services/backendService';
+import ApiKeyInput from './ApiKeyInput';
 
 interface Props {
   user: User;
   onSuccess: (updatedUser: User) => void;
 }
 
-// Fixed: Aligned with environment-provided AIStudio type to resolve declaration conflicts.
-declare global {
-  interface Window {
-    readonly aistudio: AIStudio;
-  }
-}
-
 const ApiKeyGate: React.FC<Props> = ({ user, onSuccess }) => {
+  const [manualKey, setManualKey] = useState('');
   const [isVerifying, setIsVerifying] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isAdvanced, setIsAdvanced] = useState(false);
 
-  // Check current status on mount
+  // Auto-check on mount if using AI Studio environment
   useEffect(() => {
-    const checkKey = async () => {
-      // Safely access globally defined aistudio
-      if (await window.aistudio.hasSelectedApiKey()) {
+    const checkExisting = async () => {
+      const aistudio = (window as any).aistudio;
+      if (aistudio && await aistudio.hasSelectedApiKey()) {
         const res = await verifyApiKey('GEMINI');
-        if (res.valid) {
-          setIsSuccess(true);
-          handleSuccess();
-        }
+        if (res.valid) handleSuccess();
       }
     };
-    checkKey();
+    checkExisting();
   }, []);
 
-  const handleOpenSelector = async () => {
+  const handleManualConnect = async () => {
+    const trimmedKey = manualKey.trim();
+    if (!trimmedKey) return;
+    
     setError(null);
     setIsVerifying(true);
     
-    try {
-      // Trigger the platform dialog
-      await window.aistudio.openSelectKey();
-      
-      // As per instructions: Assume the key selection was successful after triggering openSelectKey()
-      // Create a new instance right before verifying to ensure it uses the injected key.
-      const result = await verifyApiKey('GEMINI');
+    // REAL HANDSHAKE: This calls the actual Google API via geminiService
+    const result = await verifyApiKey('GEMINI', trimmedKey);
 
-      if (result.valid) {
-        setIsSuccess(true);
-        handleSuccess();
-      } else {
-        setError(result.error || "Handshake Rejected: Please select a valid API key from a paid project.");
-        setIsVerifying(false);
-      }
-    } catch (err: any) {
-      setError("Handshake Failed: Access to AI Studio nodes was interrupted.");
+    if (result.valid) {
+      handleSuccess(trimmedKey);
+    } else {
+      // Hard failure - key is wrong or fake
+      setError("INVALID API KEY – CONNECTION FAILED");
       setIsVerifying(false);
     }
   };
 
-  const handleSuccess = () => {
+  const handleGoogleConnect = async () => {
+    setError(null);
+    setIsVerifying(true);
+    try {
+      const aistudio = (window as any).aistudio;
+      if (!aistudio) throw new Error("AI Studio context missing");
+      
+      await aistudio.openSelectKey();
+      
+      // Verify the selected key works
+      const result = await verifyApiKey('GEMINI');
+      
+      if (result.valid) {
+        handleSuccess();
+      } else {
+        setError("INVALID API KEY – CONNECTION FAILED");
+        setIsVerifying(false);
+      }
+    } catch (err) {
+      setError("INVALID API KEY – CONNECTION FAILED");
+      setIsVerifying(false);
+    }
+  };
+
+  const handleSuccess = (key?: string) => {
+    setIsSuccess(true);
     const updatedUser: User = {
       ...user,
-      activeAiProvider: 'GEMINI',
+      activeAiProvider: isAdvanced ? 'CUSTOM' : 'GEMINI',
+      geminiApiKey: key,
       geminiKeyStatus: 'VERIFIED',
       apiKeyVerifiedAt: new Date().toISOString(),
     };
     backendService.updateUser(updatedUser);
-    setTimeout(() => onSuccess(updatedUser), 1000);
+    
+    // Show success state briefly before transitioning
+    setTimeout(() => {
+      onSuccess(updatedUser);
+    }, 1500);
   };
 
+  if (isAdvanced) {
+    return (
+      <ApiKeyInput 
+        user={user} 
+        onSuccess={onSuccess} 
+        onBack={() => setIsAdvanced(false)} 
+      />
+    );
+  }
+
   return (
-    <div className="max-w-2xl mx-auto py-8 animate-in fade-in duration-700 px-4">
-      <div className="bg-white rounded-[3.5rem] shadow-2xl border border-slate-100 p-10 md:p-14 text-center overflow-hidden relative">
+    <div className="min-h-[80vh] flex items-center justify-center py-12 px-4 animate-in fade-in zoom-in-95 duration-700">
+      <div className="w-full max-w-xl bg-[#0B0F17] rounded-[4rem] shadow-[0_60px_120px_-20px_rgba(0,0,0,0.8)] border border-slate-800/50 p-12 md:p-16 text-center relative overflow-hidden">
         
         {isSuccess && (
           <div className="absolute inset-0 bg-emerald-600 z-50 flex flex-col items-center justify-center text-white animate-in fade-in duration-500">
-            <div className="w-24 h-24 bg-white/20 rounded-full flex items-center justify-center mb-6 border-4 border-white/40 animate-bounce">
+            <div className="w-24 h-24 bg-white/20 rounded-full flex items-center justify-center mb-6 animate-bounce">
               <svg className="h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={4} d="M5 13l4 4L19 7" />
               </svg>
             </div>
-            <h3 className="text-3xl font-black uppercase italic tracking-tighter">Node Synchronized</h3>
-            <p className="text-emerald-100 font-bold text-sm mt-2 uppercase tracking-widest animate-pulse italic">Establishing encrypted node socket...</p>
+            <h3 className="text-3xl font-black uppercase italic tracking-tighter">Connected</h3>
+            <p className="text-emerald-100 font-bold text-[10px] uppercase tracking-[0.5em] mt-2">Uplink Active</p>
           </div>
         )}
 
-        <div className="w-24 h-24 bg-blue-600/10 rounded-[2.5rem] flex items-center justify-center text-blue-600 mx-auto mb-10 shadow-xl shadow-blue-500/5">
-          <svg className="h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-          </svg>
+        <div className="mb-12">
+          <div className="w-20 h-20 bg-blue-600/10 rounded-[2rem] flex items-center justify-center text-blue-500 mx-auto mb-10 shadow-3xl shadow-blue-500/20 border border-blue-500/30">
+            <svg className="h-10 w-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+            </svg>
+          </div>
+          <h2 className="text-5xl font-black text-white uppercase tracking-tighter mb-4 leading-none">
+            Relay <span className="text-blue-500">Node</span>
+          </h2>
+          <p className="text-slate-400 font-medium italic max-w-sm mx-auto">
+            Provide a valid <span className="text-white font-bold underline">Gemini API Key</span> to initiate the SEO Intelligence protocol.
+          </p>
         </div>
-        
-        <h2 className="text-4xl font-black text-slate-900 mb-4 tracking-tighter uppercase italic leading-none">Node Authentication</h2>
-        <p className="text-slate-500 text-lg mb-12 font-medium italic">Establishing a verified uplink to your private AI project.</p>
 
         {error && (
-          <div className="p-8 bg-red-50 border border-red-200 rounded-[3rem] text-left animate-in slide-in-from-top-4 duration-300 mb-8">
-            <div className="flex items-start gap-4">
-              <div className="bg-red-600 text-white p-1.5 rounded-xl shrink-0 shadow-lg shadow-red-500/20">
-                 <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </div>
-              <div className="space-y-1">
-                <p className="font-black uppercase tracking-widest text-[10px] italic text-red-700">Handshake Rejected</p>
-                <p className="text-xs leading-relaxed font-bold italic text-red-600 uppercase">{error}</p>
-              </div>
-            </div>
+          <div className="mb-8 p-5 bg-red-600/10 border border-red-500/50 rounded-2xl animate-in shake">
+            <p className="text-red-500 text-[10px] font-black uppercase tracking-widest">{error}</p>
           </div>
         )}
-        
+
         <div className="space-y-6">
+          <div className="relative group">
+            <input 
+              type="password"
+              placeholder="Paste Gemini Secret Key..."
+              className="w-full bg-[#151B26] border border-slate-800 rounded-full px-8 py-6 text-white text-center font-mono text-sm placeholder-slate-600 outline-none focus:border-blue-500 transition-all shadow-inner"
+              value={manualKey}
+              onChange={(e) => setManualKey(e.target.value)}
+              disabled={isVerifying}
+            />
+          </div>
+
           <button 
-            onClick={handleOpenSelector}
-            disabled={isVerifying}
-            className={`w-full py-10 rounded-[3rem] font-black uppercase tracking-[0.8em] text-[12px] shadow-2xl transition-all active:scale-95 flex flex-col items-center justify-center gap-4 ${
-              isVerifying ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-slate-900 text-white hover:bg-blue-600 shadow-blue-500/20'
+            onClick={handleManualConnect}
+            disabled={isVerifying || !manualKey.trim()}
+            className={`w-full py-6 rounded-full font-black uppercase tracking-widest text-sm flex items-center justify-center gap-3 transition-all active:scale-95 shadow-2xl ${
+              isVerifying || !manualKey.trim() 
+              ? 'bg-slate-800 text-slate-500' 
+              : 'bg-blue-600 text-white hover:bg-blue-500 shadow-blue-600/20'
             }`}
           >
             {isVerifying ? (
-              <>
-                <div className="w-8 h-8 border-4 border-slate-300 border-t-blue-600 rounded-full animate-spin mb-2"></div>
-                Initializing Handshake...
-              </>
+              <span className="flex items-center gap-2">
+                <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin"></div>
+                Verifying Handshake...
+              </span>
             ) : (
-              <>
-                <span className="text-xl">Connect via AI Studio</span>
-                <span className="tracking-[0.2em] opacity-60 text-[10px]">Physical Key Handshake</span>
-              </>
+              'Initiate Uplink'
             )}
           </button>
-          
-          <div className="p-6 bg-slate-50 border border-slate-100 rounded-3xl text-xs text-slate-500 leading-relaxed font-medium italic">
-            You must select an API key from a <span className="text-slate-900 font-bold">Paid GCP Project</span> to enable the SEO search tools and high-volume broadcasting.
+
+          <div className="relative py-6 flex items-center justify-center">
+            <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-800"></div></div>
+            <div className="relative px-6 bg-[#0B0F17] text-[9px] font-black text-slate-600 uppercase tracking-[0.4em]">Alternative</div>
           </div>
-        </div>
-        
-        <div className="mt-14 pt-8 border-t border-slate-100 flex flex-col items-center gap-6">
-          <a 
-            href="https://ai.google.dev/gemini-api/docs/billing" 
-            target="_blank" 
-            rel="noopener noreferrer" 
-            className="text-[10px] font-black text-blue-600 uppercase tracking-widest hover:underline italic flex items-center gap-2"
+
+          <button 
+            onClick={handleGoogleConnect}
+            disabled={isVerifying}
+            className="w-full py-6 rounded-full bg-white text-slate-900 font-black uppercase tracking-widest text-sm flex items-center justify-center gap-3 hover:bg-slate-100 transition-all active:scale-95 shadow-xl disabled:opacity-50"
           >
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-            Review Billing Documentation
-          </a>
-          <p className="text-[9px] text-slate-400 uppercase tracking-widest italic font-bold">Encrypted End-to-End • Strictly Validated via Network Ping</p>
+            Connect via Google Cloud
+          </button>
+        </div>
+
+        <div className="mt-16 pt-8 border-t border-slate-900 flex flex-col items-center gap-4">
+          <button 
+            onClick={() => setIsAdvanced(true)}
+            className="text-[10px] font-black text-blue-500 uppercase tracking-widest hover:text-blue-400 transition-colors underline decoration-dotted underline-offset-4"
+          >
+            Custom Infrastructure Setup
+          </button>
+          <p className="text-[10px] font-black text-slate-600 uppercase tracking-[0.3em] italic">Encrypted Secure Socket • DigiPolli v4</p>
         </div>
       </div>
     </div>
